@@ -1,0 +1,435 @@
+---
+title: "Activity 14"
+subtitle: "STAT 184"
+author: "Alfred Liljas"
+date: "Tuesday, November 11, 2025"
+date-format: full
+date-modified: now
+format:
+  html:
+    embed-resources: true
+    number-sections: true
+    toc: true
+    toc-depth: 4
+    toc-location: right
+    fig-align: center
+    cap-location: top
+    link-external-newwindow: true
+  pdf:
+    toc: true
+    number-sections: true
+execute:
+  echo: false
+  eval: true
+  warning: false
+engine: knitr
+---
+
+## Introduction
+
+This document contains the R code for activities 4, 8, 10, and 13 regarding armed forced data wrangling, popularity of baby names, and plotting mathematical functions.
+
+## Armed Forces Data Wrangling Redux (Activities #08 and #10)
+
+```{r}
+#| echo: false
+library(tidyverse)
+library(rvest)
+library(googlesheets4)
+
+rank_page <- "https://neilhatfield.github.io/Stat184_PayGradeRanks.html"
+
+ranks_raw <- rank_page %>%
+  read_html() %>%
+  html_elements("table") %>%
+  html_table() %>%
+  pluck(1)
+#clean rank data
+ranks_raw[1, 1] <- "Type"
+colnames(ranks_raw) <- ranks_raw[1, ]
+ranks_trimmed <- ranks_raw[-c(1, 26), ]
+
+ranks_tidy <- ranks_trimmed %>%
+  select(-Type) %>%
+  pivot_longer(
+    cols = -`Pay Grade`,
+    names_to = "Branch",
+    values_to = "Rank"
+  ) %>%
+  mutate(Rank = na_if(Rank, "--"))
+
+gs4_deauth()
+#read in the armed forces data from Google docs
+sheet_url <- "https://docs.google.com/spreadsheets/d/19xQnI1cBh6Jkw7eP8YQuuicMlVDF7Gr-nXCb5qbwb_E/edit?usp=sharing"
+
+headers_preview <- read_sheet(sheet_url, col_names = FALSE, n_max = 3)
+#read the data while skipping headers
+forces_raw <- read_sheet(
+  sheet_url,
+  col_names = FALSE,
+  skip = 3,
+  n_max = 28,
+  col_types = "c"
+)
+#Cleaning the forces data
+branches <- c("Army", "Navy", "Marine Corps", "Air Force", "Space Force", "Total")
+expanded_branches <- rep(branches, each = 3)
+col_names <- paste0(c("", expanded_branches), ".", headers_preview[3, ])
+
+names(forces_raw) <- col_names
+#Making the data tidy
+forces_tidy <- forces_raw %>%
+  rename(Pay.Grade = `.Pay Grade`) %>%
+  select(-contains("Total")) %>%
+  filter(!Pay.Grade %in% c("Total Enlisted", "Total Warrant Officers", "Total Officers", "Total")) %>%
+  pivot_longer(
+    cols = -Pay.Grade,
+    names_to = "Branch_Sex",
+    values_to = "Frequency"
+  ) %>%
+  separate(Branch_Sex, into = c("Branch", "Sex"), sep = "\\.") %>%
+  mutate(
+    Frequency = na_if(Frequency, "N/A*"),
+    Frequency = parse_number(Frequency)
+  )
+#merge rank data and forces data
+forces_with_ranks <- forces_tidy %>%
+  left_join(ranks_tidy, by = c("Pay.Grade" = "Pay Grade", "Branch" = "Branch"))
+#create data frame with individual data
+soldiers_individual <- forces_with_ranks %>%
+  drop_na(Frequency) %>%
+  uncount(weights = Frequency)
+head(soldiers_individual) %>%
+  knitr::kable(caption = "Preview of Individual Soldier Data") %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+
+```
+
+
+
+```{r}
+#| echo: false
+library(janitor)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(tidyr)
+
+# Reads in data, adjust file path if needed
+military_data <- read.csv("C:\\Users\\alfre\\Downloads\\US Armed Forces (6_2024) - Sheet1.csv", 
+                          skip = 1, header = TRUE)
+
+# Rename columns
+colnames(military_data) <- c(
+  "Pay_Grade", 
+  "Army_Male", "Army_Female", "Army_Total",
+  "Navy_Male", "Navy_Female", "Navy_Total",
+  "Marine_Male", "Marine_Female", "Marine_Total",
+  "AirForce_Male", "AirForce_Female", "AirForce_Total",
+  "SpaceForce_Male", "SpaceForce_Female", "SpaceForce_Total",
+  "Total_Male", "Total_Female", "Total"
+)
+
+# Clean data
+military_data <- military_data %>%
+  filter(!grepl("Source|Pay Grade|Total", Pay_Grade))
+
+# Convert columns to be numeric
+military_data[, -1] <- lapply(military_data[, -1], as.numeric)
+
+# Choosing which branch
+chosen_branch <- "Army"
+branch_data <- military_data %>%
+  select(Pay_Grade,
+         Male = paste0(chosen_branch, "_Male"),
+         Female = paste0(chosen_branch, "_Female"))
+
+branch_data <- branch_data %>%
+  mutate(Rank_Category = case_when(
+    grepl("^E", Pay_Grade) ~ "Enlisted",
+    grepl("^W", Pay_Grade) ~ "Warrant Officer",
+    grepl("^O", Pay_Grade) ~ "Officer",
+    TRUE ~ "Other"
+  ))
+
+# Filter only Warrant Officers
+branch_data <- branch_data %>%
+  filter(Rank_Category == "Warrant Officer")
+
+# Sum up counts for each gender
+freq_table <- branch_data %>%
+  summarise(
+    Male = sum(Male, na.rm = TRUE),
+    Female = sum(Female, na.rm = TRUE)
+  ) %>%
+  adorn_totals("row")
+
+# Frequency table
+freq_table %>%
+  kbl(caption = paste("Table 1. Total Number of", chosen_branch, "Warrant Officers by Sex")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+```
+
+## Popularity of Baby Names(Activity #13)
+
+I picked the names Emma, Noah, Olivia and Ethan since they were some of the most popular names I could think of. The visualization displays and compares the popularity of female and male names from 1880 to 2020. We can see that all 4 names became much more popular in the last 50 years.
+
+```{r}
+library(babynames)
+library(dplyr)
+
+names <-c("Emma","Noah", "Olivia", "Ethan")
+#Filters out names that aren't the selected ones
+babynames_filtered <- babynames %>%
+  filter(name %in% names) %>%
+  group_by(year,name,sex) %>%
+  summarise(total=sum(n), .groups='drop')
+
+ggplot(babynames_filtered, aes(x = year, y = total, color = name, linetype = sex)) +
+  geom_line(size=1) +
+  labs(
+    title = "Popularity of Baby Names Over Time",
+    x = "Year",
+    y = "Total",
+    color = "Name",
+    linetype = "Sex"
+  ) +
+  #Creates two separate graphs
+  facet_wrap(~sex) +
+  theme(
+    plot.title=element_text(face="bold", size=14),
+    legend.position="top"
+  )
+
+```
+
+## Plotting a Mathematical Function(Activity #4)
+
+This plot shows how the total volume of an open-top box changes as the side length of the cutout increases from 0 to 22 inches. The volume increases sharply until it hits it's peak at about 7 inches, and then it starts decreasing. The plot shows how optimizing the cut size leads to the largest possible volume for a 36 by 48 inch sheet
+
+```{r}
+library(ggplot2)
+
+volume <- function(x, length = 36, width = 48) {
+  (length - 2*x) * (width - 2*x) * x
+}
+
+ggplot(data.frame(x = c(0, 22)), aes(x = x)) +
+  stat_function(fun = volume, color = "blue", linewidth = 1.2) +
+  labs(
+    title = "Box Volume vs. Side Length of Cutout",
+    x = "Side Length of Cutout (inches)",
+    y = "Volume (cubic inches)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+## Reflection
+
+So far in this course, I have learned a lot about the R programming language. It started off with simple plots based on equations like the one from activity #4. Then, I learned how to use packages from R and use datasets found in those packages to create more complicated data visualizations using more complex functions of R. I also learned how to create visualizations with data found on the internet or from files downloaded from my computer. Finally, I have now learnt how to create Quarto markdown files from doing this project. Overall, this class has been a great learning experience with the R programming language.
+
+## Code Appendix
+
+# Activity #8:
+
+```{r}
+#| echo: true
+#| eval: false
+library(tidyverse)
+library(rvest)
+library(googlesheets4)
+
+rank_page <- "https://neilhatfield.github.io/Stat184_PayGradeRanks.html"
+
+ranks_raw <- rank_page %>%
+  read_html() %>%
+  html_elements("table") %>%
+  html_table() %>%
+  pluck(1)
+#clean rank data
+ranks_raw[1, 1] <- "Type"
+colnames(ranks_raw) <- ranks_raw[1, ]
+ranks_trimmed <- ranks_raw[-c(1, 26), ]
+
+ranks_tidy <- ranks_trimmed %>%
+  select(-Type) %>%
+  pivot_longer(
+    cols = -`Pay Grade`,
+    names_to = "Branch",
+    values_to = "Rank"
+  ) %>%
+  mutate(Rank = na_if(Rank, "--"))
+
+gs4_deauth()
+#read in the armed forces data from Google docs
+sheet_url <- "https://docs.google.com/spreadsheets/d/19xQnI1cBh6Jkw7eP8YQuuicMlVDF7Gr-nXCb5qbwb_E/edit?usp=sharing"
+
+headers_preview <- read_sheet(sheet_url, col_names = FALSE, n_max = 3)
+#read the data while skipping headers
+forces_raw <- read_sheet(
+  sheet_url,
+  col_names = FALSE,
+  skip = 3,
+  n_max = 28,
+  col_types = "c"
+)
+#Cleaning the forces data
+branches <- c("Army", "Navy", "Marine Corps", "Air Force", "Space Force", "Total")
+expanded_branches <- rep(branches, each = 3)
+col_names <- paste0(c("", expanded_branches), ".", headers_preview[3, ])
+
+names(forces_raw) <- col_names
+
+forces_tidy <- forces_raw %>%
+  rename(Pay.Grade = `.Pay Grade`) %>%
+  select(-contains("Total")) %>%
+  filter(!Pay.Grade %in% c("Total Enlisted", "Total Warrant Officers", "Total Officers", "Total")) %>%
+  pivot_longer(
+    cols = -Pay.Grade,
+    names_to = "Branch_Sex",
+    values_to = "Frequency"
+  ) %>%
+  separate(Branch_Sex, into = c("Branch", "Sex"), sep = "\\.") %>%
+  mutate(
+    Frequency = na_if(Frequency, "N/A*"),
+    Frequency = parse_number(Frequency)
+  )
+#merge rank data and forces data
+forces_with_ranks <- forces_tidy %>%
+  left_join(ranks_tidy, by = c("Pay.Grade" = "Pay Grade", "Branch" = "Branch"))
+#create data frame with individual data
+soldiers_individual <- forces_with_ranks %>%
+  drop_na(Frequency) %>%
+  uncount(weights = Frequency)
+head(soldiers_individual) %>%
+  knitr::kable(caption = "Preview of Individual Soldier Data") %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+```
+
+# Activity #10:
+
+```{r}
+#| echo: true
+#| eval: false
+library(janitor)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(tidyr)
+
+# Reads in data, adjust file path if needed
+military_data <- read.csv("C:\\Users\\alfre\\Downloads\\US Armed Forces (6_2024) - Sheet1.csv", 
+                          skip = 1, header = TRUE)
+
+# Rename columns
+colnames(military_data) <- c(
+  "Pay_Grade", 
+  "Army_Male", "Army_Female", "Army_Total",
+  "Navy_Male", "Navy_Female", "Navy_Total",
+  "Marine_Male", "Marine_Female", "Marine_Total",
+  "AirForce_Male", "AirForce_Female", "AirForce_Total",
+  "SpaceForce_Male", "SpaceForce_Female", "SpaceForce_Total",
+  "Total_Male", "Total_Female", "Total"
+)
+
+# Clean data
+military_data <- military_data %>%
+  filter(!grepl("Source|Pay Grade|Total", Pay_Grade))
+
+# Convert columns to be numeric
+military_data[, -1] <- lapply(military_data[, -1], as.numeric)
+
+# Choosing which branch
+chosen_branch <- "Army"
+branch_data <- military_data %>%
+  select(Pay_Grade,
+         Male = paste0(chosen_branch, "_Male"),
+         Female = paste0(chosen_branch, "_Female"))
+
+branch_data <- branch_data %>%
+  mutate(Rank_Category = case_when(
+    grepl("^E", Pay_Grade) ~ "Enlisted",
+    grepl("^W", Pay_Grade) ~ "Warrant Officer",
+    grepl("^O", Pay_Grade) ~ "Officer",
+    TRUE ~ "Other"
+  ))
+
+# Filter only Warrant Officers
+branch_data <- branch_data %>%
+  filter(Rank_Category == "Warrant Officer")
+
+# Sum up counts for each gender
+freq_table <- branch_data %>%
+  summarise(
+    Male = sum(Male, na.rm = TRUE),
+    Female = sum(Female, na.rm = TRUE)
+  ) %>%
+  adorn_totals("row")
+
+# Frequency table
+freq_table %>%
+  kbl(caption = paste("Table 1. Total Number of", chosen_branch, "Warrant Officers by Sex")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+
+```
+
+# Activity #13:
+
+```{r}
+#| echo: true
+#| eval: false
+#| alt: "Line graph of baby name popularity over time for Emma, Olivia (female) and Ethan, Noah (male), from 1880 to 2020."
+# ALT TEXT: Line graph of baby name popularity over time for Emma, Olivia (female) and Ethan, Noah (male), from 1880 to 2020.
+
+library(babynames)
+library(dplyr)
+
+names <-c("Emma","Noah", "Olivia", "Ethan")
+#Filters out names that aren't the selected ones
+babynames_filtered <- babynames %>%
+  filter(name %in% names) %>%
+  group_by(year,name,sex) %>%
+  summarise(total=sum(n), .groups='drop')
+
+ggplot(babynames_filtered, aes(x = year, y = total, color = name, linetype = sex)) +
+  geom_line(size=1) +
+  labs(
+    title = "Popularity of Baby Names Over Time",
+    x = "Year",
+    y = "Total",
+    color = "Name",
+    linetype = "Sex"
+  ) +
+  #Creates two separate graphs
+  facet_wrap(~sex) +
+  theme(
+    plot.title=element_text(face="bold", size=14),
+    legend.position="top"
+  )
+```
+
+# Activity #4:
+
+```{r}
+#| echo: true
+#| eval: false
+#| alt: "Graph showing Box Volume vs. Side Length of Cutout with a blue curve that peaks near 8 inches."
+#ALT TEXT: Graph showing Box Volume vs. Side Length of Cutout with a blue curve that peaks near 8 inches.
+
+library(ggplot2)
+
+volume <- function(x, length = 36, width = 48) {
+  (length - 2*x) * (width - 2*x) * x
+}
+
+ggplot(data.frame(x = c(0, 22)), aes(x = x)) +
+  stat_function(fun = volume, color = "blue", linewidth = 1.2) +
+  labs(
+    title = "Box Volume vs. Cut Size",
+    x = "Side Length of Cutout (inches)",
+    y = "Volume (cubic inches)"
+  ) +
+  theme_minimal(base_size = 14)
+```
