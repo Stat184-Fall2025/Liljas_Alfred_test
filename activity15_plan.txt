@@ -1,0 +1,2 @@
+The plan for this project is to follow the steps outlined in activity 15 to successfully set up a repo in GitHub.
+This repo will be used for in class activities and uploading activities that we do.
